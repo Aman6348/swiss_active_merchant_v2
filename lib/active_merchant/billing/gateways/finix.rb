@@ -20,7 +20,7 @@ module ActiveMerchant #:nodoc:
       CONTENT_TYPE = 'application/json'.freeze
 
       self.test_url = 'https://finix.sandbox-payments-api.com'
-      self.live_url = 'https://www.finixpayments.com'
+      self.live_url = 'https://finix.live-payments-api.com'
       self.supported_countries = %w[US CA]
       self.supported_cardtypes = %i[visa master american_express discover]
       self.default_currency = 'USD'
