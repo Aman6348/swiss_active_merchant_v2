@@ -39,7 +39,10 @@ module ActiveMerchant #:nodoc:
       def purchase(amount, payment_source, options = {})
         post = {}
         add_invoice(post, amount, options)
-        add_payment_source(post, payment_source, options)
+
+        result = add_payment_source(post, payment_source, options)
+        return result if result.is_a?(Response) && !result.success?
+
         add_idempotency_id(post, options)
 
         verification_data = options[:verification_data] || {}
