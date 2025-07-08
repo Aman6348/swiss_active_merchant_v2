@@ -44,6 +44,7 @@ module ActiveMerchant #:nodoc:
         return result if result.is_a?(Response) && !result.success?
 
         add_idempotency_id(post, options)
+        add_statement_descriptor(post, options)
 
         verification_data = options[:verification_data] || {}
         commit('transaction', post, verification_data, options)
@@ -146,6 +147,10 @@ module ActiveMerchant #:nodoc:
 
       def add_idempotency_id(post, options)
         post[:idempotency_id] = options['idempotency_id']
+      end
+
+      def add_statement_descriptor(post, options)
+        post[:statement_descriptor] = options['descriptor']
       end
 
       def add_identity_data(post, options)
@@ -257,6 +262,7 @@ module ActiveMerchant #:nodoc:
             merchant: @merchant_id,
             source: params[:instrument_id],
             idempotency_id: params[:idempotency_id],
+            statement_descriptor: params[:statement_descriptor],
             tags: params[:tags]
           }
         else
