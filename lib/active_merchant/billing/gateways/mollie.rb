@@ -59,7 +59,7 @@ module ActiveMerchant #:nodoc:
       end
 
       def void(authorization, options = {})
-        commit("payments/#{authorization}", {}, options.merge(method: :delete))
+        commit("payments/#{authorization}/cancel", {}, options)
       end
 
       private
@@ -193,13 +193,12 @@ module ActiveMerchant #:nodoc:
         }
       end
 
-      def commit(endpoint, post = {}, options = {})
+      def commit(endpoint, post = {}, _options = {})
         request_url = build_request_url(endpoint)
         payload = build_payload(post)
-        method = options[:method]
 
         begin
-          raw_response = perform_request(method, request_url, payload)
+          raw_response = perform_request(:post, request_url, payload)
           response = parse(raw_response)
           succeeded = success_from(response)
 
@@ -213,7 +212,7 @@ module ActiveMerchant #:nodoc:
             response_type: response_type_from(response),
             response_http_code: @response_http_code,
             request_endpoint: request_url,
-            request_method: method,
+            request_method: :post,
             request_body: payload
           )
         rescue ResponseError => e
@@ -230,16 +229,7 @@ module ActiveMerchant #:nodoc:
       end
 
       def perform_request(method, url, payload)
-        case method
-        when :post
-          ssl_post(url, payload.to_json, headers)
-        when :get
-          ssl_get(url, headers)
-        when :delete
-          ssl_delete(url, headers)
-        else
-          raise ArgumentError, "Unsupported HTTP method: #{method}"
-        end
+        ssl_post(url, payload.to_json, headers)
       end
 
       def url
