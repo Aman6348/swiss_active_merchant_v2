@@ -195,7 +195,7 @@ module ActiveMerchant #:nodoc:
         post[:shippingAddress] = shipping_address
       end
 
-      def build_address(data, email)
+      def build_address(data, email = nil)
         return if data.blank?
 
         first_name, last_name = split_names(data[:name])
