@@ -5,6 +5,7 @@ module ActiveMerchant #:nodoc:
 
       self.test_url = 'https://api-sandbox.flexfactor.io'
       self.live_url = 'https://api.flexfactor.io'
+      self.homepage_url = 'https://www.flexcharge.com'
       self.supported_countries = %w[US CA]
       self.supported_cardtypes = %i[visa master american_express discover]
       self.default_currency = 'USD'
@@ -33,7 +34,7 @@ module ActiveMerchant #:nodoc:
         add_invoice(post, amount, options)
         add_payment_method(post, tokenize_response.params['paymentMethod'])
         add_customer_data(post, options)
-        add_billing_address(post, payment_source)
+        add_billing_address(post, payment_source, options['billing_address'])
         add_merchant_data(post, options)
         add_idempotency_key(post, options)
 
@@ -94,7 +95,7 @@ module ActiveMerchant #:nodoc:
             credit_card: {
               first_name: payment_source.first_name,
               last_name: payment_source.last_name,
-              number: '4000002760003184',
+              number: payment_source.number,
               verification_value: payment_source.verification_value,
               month: payment_source.month.to_s,
               year: payment_source.year.to_s
@@ -136,7 +137,7 @@ module ActiveMerchant #:nodoc:
         status = evaluate_response.params['status']
 
         case status
-        when 'CAPTUREREQUIRED', 'CHALLENGE'
+        when 'CAPTUREREQUIRED'
           process_capture_required(evaluate_response, amount, options)
         else
           evaluate_response
@@ -145,7 +146,7 @@ module ActiveMerchant #:nodoc:
 
       def process_capture_required(evaluate_response, amount, options)
         capture_response = capture(amount, evaluate_response.authorization, options)
-        merged_params = evaluate_response.params.merge('capture' => capture_response.params)
+        merged_params    = evaluate_response.params.merge('capture' => capture_response.params)
 
         Response.new(
           capture_response.success?,
@@ -157,19 +158,11 @@ module ActiveMerchant #:nodoc:
       end
 
       def add_invoice(post, amount, options)
-        transaction_id = options[:order_id] || SecureRandom.hex(6)
-
         post[:transaction] = {
           amount: amount,
-          currency: options[:currency] || default_currency,
-          id: transaction_id,
-          dynamicDescriptor: options[:descriptor] || 'YourBusiness',
-          avsResultCode: 'Y',
-          cvvResultCode: 'M',
-          cavvResultCode: '2',
-          responseCodeSource: 'G',
-          responseCode: '05',
-          responseStatus: 'DECLINED',
+          currency: options[:currency],
+          id: options[:order_id],
+          dynamicDescriptor: options[:descriptor],
           transactionType: 'CAPTURE'
         }
       end
@@ -180,34 +173,35 @@ module ActiveMerchant #:nodoc:
 
       def add_customer_data(post, options)
         post[:payer] = {
-          email: options[:email] || 'test@example.com'
+          email: options[:email]
         }
       end
 
-      def add_billing_address(post, payment_source)
+      def add_billing_address(post, payment_source, billing_address)
         post[:billingInformation] = {
           firstName: payment_source.first_name,
           lastName: payment_source.last_name,
-          country: 'United States',
-          countryCode: 'US',
-          addressLine1: 'sdsd',
-          city: 'sdfghj',
-          state: 'asdfghj',
-          zipcode: "asdfghj"
+          country: billing_address["country"],
+          countryCode: billing_address["country"],
+          addressLine1: billing_address["address1"],
+          city: billing_address["city"],
+          state: billing_address["state"],
+          zipcode: billing_address["zip"]
         }.compact
       end
 
       def add_merchant_data(post, options)
-        post[:orderId] = options[:order_id] || SecureRandom.uuid
-        post[:mid] = @mid
+        post[:orderId]    = options[:order_id]
+        post[:mid]        = @mid
         post[:isDeclined] = true
-        post[:siteId] = @site_id
+        post[:siteId]     = @site_id
       end
 
       def add_capture_data(post, amount, authorization, options)
-        post[:orderId] = authorization
-        post[:amount] = amount
-        post[:currency] = options[:currency] || default_currency
+        post[:idempotencyKey] = options[:idempotency_id]
+        post[:orderId]        = authorization
+        post[:amount]         = amount
+        post[:currency]       = options[:currency]
       end
 
       def add_refund_data(post, amount)
@@ -215,19 +209,20 @@ module ActiveMerchant #:nodoc:
       end
 
       def add_idempotency_key(post, options)
-        post[:idempotencyKey] = options[:idempotency_key] || SecureRandom.uuid
+        post[:idempotencyKey] = options[:idempotency_id]
       end
 
       def commit(action, params, access_token, options = {})
-        request_url = build_request_url(action, options)
+        request_url  = build_request_url(action, options)
         raw_response = ssl_post(request_url, params.to_json, headers(access_token))
-        response = parse(raw_response).merge('is_flexcharge' => 'true')
-        succeeded = success_from(action, response)
+        response     = parse(raw_response)
+        succeeded    = success_from(action, response)
 
         Response.new(
           succeeded,
           message_from(action, response),
           response,
+          error_code: error_code_from(succeeded, response),
           authorization: authorization_from(response),
           test: test?,
           request_method: :post,
@@ -267,7 +262,7 @@ module ActiveMerchant #:nodoc:
       end
 
       def get_access_token
-        payload = build_token_payload
+        payload      = build_token_payload
         raw_response = ssl_post("#{url}/v1/oauth2/token", payload.to_json, tokenization_headers)
         process_token_response(raw_response)
       rescue ResponseError => e
@@ -282,8 +277,8 @@ module ActiveMerchant #:nodoc:
       end
 
       def process_token_response(raw_response)
-        parsed = parse(raw_response)
-        token = parsed['accessToken']
+        parsed  = parse(raw_response)
+        token   = parsed['accessToken']
         success = token.present?
 
         Response.new(
@@ -306,34 +301,32 @@ module ActiveMerchant #:nodoc:
       def success_from(action, response)
         case action
         when 'evaluate'
-          status = response['status']
-          status = 'Succeeded' if status == 'APPROVED'
-          status == 'Succeeded'
+          %w[APPROVED CAPTUREREQUIRED].include?(response['status'])
         when 'capture'
-          response['captureStatus'] == 'SUCCESS'
+          response['status'] == 'SUCCESS'
         when 'refund'
           response['status'] == 'SUCCESS'
+        else
+          false
         end
       end
 
       def message_from(action, response)
+        status = response['status']
+
         case action
         when 'evaluate'
-          status = response['status']
+          return 'Pending' if %w[SUBMITTED CHALLENGE].include?(status)
           status == 'APPROVED' ? 'Succeeded' : status
         when 'capture'
-          response['captureStatus']
+          status == 'SUCCESS' ? status : Array(response['errors']).join(', ').presence
         when 'refund'
-          if response['status'] == 'SUCCESS'
-            response['status']
-          else
-            response['responseMessage']
-          end
+          status == 'SUCCESS' ? status : response['responseMessage']
         end
       end
 
       def authorization_from(response)
-        response['orderId']
+        response['orderId'] || response['transactionId']
       end
 
       def handle_response_error(error)
@@ -342,11 +335,20 @@ module ActiveMerchant #:nodoc:
         parsed = parse(body) rescue { 'error' => body }
         Response.new(
           false,
-          parsed['error'] || 'Unspecified Error',
+          parsed['error'],
           parsed,
           test: test?,
           response_http_code: @response_http_code
         )
+      end
+
+      def error_code_from(succeeded, response)
+        return nil if succeeded
+
+        errors = response['errors']
+        return response['title'] if errors.blank?
+
+        errors.map { |_, messages| Array(messages).join(', ') }.join('; ')
       end
 
       def handle_response(response)
@@ -356,9 +358,9 @@ module ActiveMerchant #:nodoc:
 
       def response_type(status)
         case status
-        when 'APPROVED'             then 0
-        when 'DECLINED', 'FAILED'   then 2
-        when 'CAPTUREREQUIRED', 'CHALLENGE' then 1
+        when 'APPROVED', 'SUCCESS'                       then 0
+        when 'CAPTUREREQUIRED', 'CHALLENGE', 'SUBMITTED' then 1
+        when 'FAILED'                                    then 2
         else 1
         end
       end
